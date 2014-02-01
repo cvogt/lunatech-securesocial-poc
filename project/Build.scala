@@ -5,17 +5,17 @@ import play.Project._
 object ApplicationBuild extends Build {
 
   val appName         = "securesocial-poc"
-  val appVersion      = "1.0-SNAPSHOT"
+  val appVersion      = "1.1-SNAPSHOT"
 
   val appDependencies = Seq(
     jdbc,
-    "com.typesafe.play" %% "play-slick" % "0.3.3",
-    "securesocial" %% "securesocial" % "master-SNAPSHOT"
+    "com.typesafe.slick" %% "slick" % "2.0.0",
+    "com.h2database" % "h2" % "1.3.166",
+    "ws.securesocial" %% "securesocial" % "2.1.3"
   )
 
-
   val main = play.Project(appName, appVersion, appDependencies).settings(
-    resolvers += Resolver.url("sbt-plugin-snapshots", url("http://repo.scala-sbt.org/scalasbt/sbt-plugin-snapshots/"))(Resolver.ivyStylePatterns)
+    resolvers += Resolver.sonatypeRepo("releases")
   )
 
 }

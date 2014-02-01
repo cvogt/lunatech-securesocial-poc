@@ -1,15 +1,11 @@
 package models
 
 import securesocial.core._
-import play.api.db.slick.Config.driver.simple._
-import play.api.db.slick.DB
-import securesocial.core.Identity
-import securesocial.core.UserId
-import securesocial.core.OAuth1Info
-import play.api.Play.current
+import scala.slick.driver.H2Driver.simple._
+import scala.slick.lifted.{ToShapedValue, ProvenShape}
 
 case class User(uid: Option[Long] = None,
-                id: UserId,
+                identityId: IdentityId,
                 firstName: String,
                 lastName: String,
                 fullName: String,
@@ -22,32 +18,32 @@ case class User(uid: Option[Long] = None,
 
 }
 
-object User {
+//object User {
+//
+//  def apply(i: Identity): User = User(None, i.identityId, i.firstName, i.lastName, i.fullName,
+//    i.email, i.avatarUrl, i.authMethod, i.oAuth1Info, i.oAuth2Info)
+//}
 
-  def apply(i: Identity): User = User(None, i.id, i.firstName, i.lastName, i.fullName, i.email, i.avatarUrl, i.authMethod, i.oAuth1Info, i.oAuth2Info)
-}
+class Users(tag: Tag) extends Table[User](tag, "user") {
 
-object Users extends Table[User]("user") {
-
-  implicit def string2AuthenticationMethod: TypeMapper[AuthenticationMethod] = MappedTypeMapper.base[AuthenticationMethod, String](
+  implicit def string2AuthenticationMethod = MappedColumnType.base[AuthenticationMethod, String](
     authenticationMethod => authenticationMethod.method,
     string => AuthenticationMethod(string)
   )
 
-  implicit def tuple2OAuth1Info(tuple: (Option[String], Option[String])) = tuple match {
+  implicit def tuple2OAuth1Info(tuple: (Option[String], Option[String])): Option[OAuth1Info] = tuple match {
     case (Some(token), Some(secret)) => Some(OAuth1Info(token, secret))
     case _ => None
   }
 
-  implicit def tuple2OAuth2Info(tuple: (Option[String], Option[String], Option[Int], Option[String])) = tuple match {
+  implicit def tuple2OAuth2Info(tuple: (Option[String], Option[String], Option[Int], Option[String])): Option[OAuth2Info] = tuple match {
     case (Some(token), tokenType, expiresIn, refreshToken) => Some(OAuth2Info(token, tokenType, expiresIn, refreshToken))
     case _ => None
   }
 
-  implicit def tuple2UserId(tuple: (String, String)) = tuple match {
-    case (userId, providerId) => UserId(userId, providerId)
+  implicit def tuple2IdentityId(tuple: (String, String)): IdentityId = tuple match {
+    case (userId, providerId) => IdentityId(userId, providerId)
   }
-
 
   def uid = column[Long]("id", O.PrimaryKey, O.AutoInc)
 
@@ -81,36 +77,71 @@ object Users extends Table[User]("user") {
 
   def refreshToken = column[Option[String]]("refreshToken")
 
-  def * = uid.? ~ userId ~ providerId ~ firstName ~ lastName ~ fullName ~ email ~ avatarUrl ~ authMethod ~ token ~ secret ~ accessToken ~ tokenType ~ expiresIn ~ refreshToken <>(
-    u => User(u._1, (u._2, u._3), u._4, u._5, u._6, u._7, u._8, u._9, (u._10, u._11), (u._12, u._13, u._14, u._15)),
-    (u: User) => Some((u.uid, u.id.id, u.id.providerId, u.firstName, u.lastName, u.fullName, u.email, u.avatarUrl, u.authMethod, u.oAuth1Info.map(_.token), u.oAuth1Info.map(_.secret), u.oAuth2Info.map(_.accessToken), u.oAuth2Info.flatMap(_.tokenType), u.oAuth2Info.flatMap(_.expiresIn), u.oAuth2Info.flatMap(_.refreshToken))))
+  //def f = User.tupled
 
-  def autoInc = * returning uid
+  def g = {
+    (u: User) => Some((u.uid, (u.identityId.userId, u.identityId.providerId), u.firstName, u.lastName, u.fullName, u.email,
+      u.avatarUrl, u.authMethod, u.oAuth1Info.map(_.token), u.oAuth1Info.map(_.secret), u.oAuth2Info.map(_.accessToken),
+      u.oAuth2Info.flatMap(_.tokenType), u.oAuth2Info.flatMap(_.expiresIn), u.oAuth2Info.flatMap(_.refreshToken)))
+  }
 
-  def findById(id: Long) = DB.withSession {
+  def * : ProvenShape[User] = {
+    val shapedValue = (uid.?,
+      userId,
+      providerId,
+      firstName,
+      lastName,
+      fullName,
+      email,
+      avatarUrl,
+      authMethod,
+      token,
+      secret,
+      accessToken,
+      tokenType,
+      expiresIn,
+      refreshToken)
+
+    shapedValue.<>(u => User.apply(uid = u._1,
+      identityId = tuple2IdentityId(u._2, u._3),
+      firstName = u._4,
+      lastName = u._5,
+      fullName = u._6,
+      email = u._7,
+      avatarUrl = u._8,
+      authMethod = u._9,
+      oAuth1Info = (u._10, u._11),
+      oAuth2Info = (u._12, u._13, u._14, u._15)), g)
+  }
+
+  //  def autoInc = * returning uid
+
+  val users = TableQuery[Users]
+
+  def findById(id: Long) = withSession {
     implicit session =>
       val q = for {
-        user <- Users
+        user <- users
         if user.uid is id
       } yield user
 
       q.firstOption
   }
 
-  def findByUserId(userId: UserId): Option[User] = DB.withSession {
+  def findByIdentityId(identityId: IdentityId): Option[User] = withSession {
     implicit session =>
       val q = for {
-        user <- Users
-        if (user.userId is userId.id) && (user.providerId is userId.providerId)
+        user <- users
+        if (user.userId is identityId.userId) && (user.providerId is identityId.providerId)
       } yield user
 
       q.firstOption
   }
 
-  def all = DB.withSession {
+  def all = withSession {
     implicit session =>
       val q = for {
-        user <- Users
+        user <- users
       } yield user
 
       q.list
@@ -118,16 +149,16 @@ object Users extends Table[User]("user") {
 
   def save(i: Identity): User = this.save(User(i))
 
-  def save(user: User) = DB.withSession {
+  def save(user: User) = withSession {
     implicit session =>
-      findByUserId(user.id) match {
+      findByIdentityId(user.identityId) match {
         case None => {
           val uid = this.autoInc.insert(user)
           user.copy(uid = Some(uid))
         }
         case Some(existingUser) => {
           val userRow = for {
-            u <- Users
+            u <- users
             if u.uid is existingUser.uid
           } yield u
 
@@ -138,5 +169,10 @@ object Users extends Table[User]("user") {
       }
   }
 
+  def withSession[T](block: (Session => T)) =
+    Database.forURL("jdbc:h2:mem:test1", driver = "org.h2.Driver") withSession {
+      session =>
+        block(session)
+    }
 
 }
