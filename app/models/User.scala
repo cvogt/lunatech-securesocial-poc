@@ -4,6 +4,7 @@ import securesocial.core._
 import scala.slick.driver.H2Driver.simple._
 import scala.slick.lifted.{ToShapedValue, ProvenShape}
 
+import Tables._
 case class User(uid: Option[Long] = None,
                 identityId: IdentityId,
                 firstName: String,
@@ -18,11 +19,10 @@ case class User(uid: Option[Long] = None,
 
 }
 
-//object User {
-//
-//  def apply(i: Identity): User = User(None, i.identityId, i.firstName, i.lastName, i.fullName,
-//    i.email, i.avatarUrl, i.authMethod, i.oAuth1Info, i.oAuth2Info)
-//}
+object UserFromIdentity{
+ def apply(i: Identity): User = User(None, i.identityId, i.firstName, i.lastName, i.fullName,
+   i.email, i.avatarUrl, i.authMethod, i.oAuth1Info, i.oAuth2Info)
+}
 
 class Users(tag: Tag) extends Table[User](tag, "user") {
 
@@ -80,7 +80,7 @@ class Users(tag: Tag) extends Table[User](tag, "user") {
   //def f = User.tupled
 
   def g = {
-    (u: User) => Some((u.uid, (u.identityId.userId, u.identityId.providerId), u.firstName, u.lastName, u.fullName, u.email,
+    (u: User) => Some((u.uid, u.identityId.userId, u.identityId.providerId, u.firstName, u.lastName, u.fullName, u.email,
       u.avatarUrl, u.authMethod, u.oAuth1Info.map(_.token), u.oAuth1Info.map(_.secret), u.oAuth2Info.map(_.accessToken),
       u.oAuth2Info.flatMap(_.tokenType), u.oAuth2Info.flatMap(_.expiresIn), u.oAuth2Info.flatMap(_.refreshToken)))
   }
@@ -100,7 +100,8 @@ class Users(tag: Tag) extends Table[User](tag, "user") {
       accessToken,
       tokenType,
       expiresIn,
-      refreshToken)
+      refreshToken
+    ).shaped
 
     shapedValue.<>(u => User.apply(uid = u._1,
       identityId = tuple2IdentityId(u._2, u._3),
@@ -114,65 +115,67 @@ class Users(tag: Tag) extends Table[User](tag, "user") {
       oAuth2Info = (u._12, u._13, u._14, u._15)), g)
   }
 
-  //  def autoInc = * returning uid
+}
 
-  val users = TableQuery[Users]
+object Tables{
+  val Users = new TableQuery[Users](new Users(_)){
+    def autoInc = this returning this.map(_.uid)
 
-  def findById(id: Long) = withSession {
-    implicit session =>
-      val q = for {
-        user <- users
-        if user.uid is id
-      } yield user
+    def findById(id: Long) = withSession {
+      implicit session =>
+        val q = for {
+          user <- this
+          if user.uid is id
+        } yield user
 
-      q.firstOption
-  }
-
-  def findByIdentityId(identityId: IdentityId): Option[User] = withSession {
-    implicit session =>
-      val q = for {
-        user <- users
-        if (user.userId is identityId.userId) && (user.providerId is identityId.providerId)
-      } yield user
-
-      q.firstOption
-  }
-
-  def all = withSession {
-    implicit session =>
-      val q = for {
-        user <- users
-      } yield user
-
-      q.list
-  }
-
-  def save(i: Identity): User = this.save(User(i))
-
-  def save(user: User) = withSession {
-    implicit session =>
-      findByIdentityId(user.identityId) match {
-        case None => {
-          val uid = this.autoInc.insert(user)
-          user.copy(uid = Some(uid))
-        }
-        case Some(existingUser) => {
-          val userRow = for {
-            u <- users
-            if u.uid is existingUser.uid
-          } yield u
-
-          val updatedUser = user.copy(uid = existingUser.uid)
-          userRow.update(updatedUser)
-          updatedUser
-        }
-      }
-  }
-
-  def withSession[T](block: (Session => T)) =
-    Database.forURL("jdbc:h2:mem:test1", driver = "org.h2.Driver") withSession {
-      session =>
-        block(session)
+        q.firstOption
     }
 
+    def findByIdentityId(identityId: IdentityId): Option[User] = withSession {
+      implicit session =>
+        val q = for {
+          user <- this
+          if (user.userId is identityId.userId) && (user.providerId is identityId.providerId)
+        } yield user
+
+        q.firstOption
+    }
+
+    def all = withSession {
+      implicit session =>
+        val q = for {
+          user <- this
+        } yield user
+
+        q.list
+    }
+
+    def save(i: Identity): User = this.save(UserFromIdentity(i))
+
+    def save(user: User): User = withSession {
+      implicit session =>
+        findByIdentityId(user.identityId) match {
+          case None => {
+            val uid = this.autoInc.insert(user)
+            user.copy(uid = Some(uid))
+          }
+          case Some(existingUser) => {
+            val userRow = for {
+              u <- this
+              if u.uid is existingUser.uid
+            } yield u
+
+            val updatedUser = user.copy(uid = existingUser.uid)
+            userRow.update(updatedUser)
+            updatedUser
+          }
+        }
+    }
+
+    def withSession[T](block: (Session => T)) =
+      Database.forURL("jdbc:h2:mem:test1", driver = "org.h2.Driver") withSession {
+        session =>
+          block(session)
+      }
+  }
 }

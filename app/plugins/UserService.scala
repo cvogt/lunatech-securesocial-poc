@@ -3,7 +3,7 @@ package plugins
 import play.api.Application
 import securesocial.core.{IdentityId, UserId, Identity, UserServicePlugin}
 import securesocial.core.providers.Token
-import models.Users
+import models.Tables._
 
 class UserService(application: Application) extends UserServicePlugin(application) {
 
